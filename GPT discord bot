@@ -1,0 +1,93 @@
+import discord
+import openai
+from discord.ext import commands
+from config.config import DISCORD_BOT_TOKEN, OPENAI_API_KEY
+
+# Set up the intents
+intents = discord.Intents.default()
+intents.members = True
+intents.messages = True
+
+# Set up the bot instance and command prefix
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Initialize the OpenAI API
+openai.api_key = OPENAI_API_KEY
+
+# Store message history for each channel
+channel_message_history = {}
+
+# Wind turbine details as a single string
+turbine_info = """
+Wind Turbine Model: Vestas V164-9.5 MW
+Manufacturer: Vestas Wind Systems A/S
+Turbine Type: Offshore wind turbine
+Rated Power: 9.5 megawatts
+Rotor Diameter: 164 meters
+Hub Height: 105 to 140 meters
+Cut-in Wind Speed: 3-4 meters per second
+Rated Wind Speed: 12 m/s
+Cut-out Wind Speed: 25 m/s
+Annual Energy Production: 40 to 50 gigawatt-hours
+Turbine Lifetime: 25 years
+Noise Emissions: Low noise emissions
+Environmental Impact: Minimal impact on local wildlife and ecosystems
+Cost: $10 to $15 million
+Availability: Over 95% uptime
+"""
+
+async def fetch_message_history(channel):
+    message_history = [
+        {"role": "system", "content": f"I am an AI with knowledge about the following wind turbine:{turbine_info}"}
+    ]
+
+    # Fetch the last 20 messages
+    async for message in channel.history(limit=20):
+        if message.author != bot.user:
+            role = "user" if not message.author.bot else "assistant"
+            message_history.append({"role": role, "content": message.content})
+
+    return message_history
+
+# Event to display a message when the bot is ready
+@bot.event
+async def on_ready():
+    print(f"{bot.user.name} has connected to Discord!")
+    for guild in bot.guilds:
+        print(f"Connected to server: {guild.name}")
+        for channel in guild.text_channels:
+            channel_message_history[channel.id] = await fetch_message_history(channel)
+
+# Event to handle new messages as they come in
+@bot.event
+async def on_message(message):
+    if message.author == bot.user or message.content.strip() == "":
+        return
+
+    channel_id = message.channel.id
+
+    # Add the user message to the message history
+    channel_message_history[channel_id].append({"role": "user", "content": message.content})
+
+    # Updated code for v1/chat/completions
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=channel_message_history[channel_id],
+        max_tokens=150,
+        n=1,
+        stop=None,
+        temperature=0.5,
+    )
+
+    answer = response.choices[0].message['content'].strip()
+
+    # Add the bot's response to the message history
+    channel_message_history[channel_id].append({"role": "assistant", "content": answer})
+
+    if "off-topic" in answer.lower():
+        await message.channel.send("Your question seems off-topic. I am programmed to answer questions about the Vestas V164-9.5 MW wind turbine. Please ask a relevant question.")
+    else:
+        await message.channel.send(answer)
+
+# Connect the bot to Discord using the bot token
+bot.run(DISCORD_BOT_TOKEN)
